@@ -5,12 +5,12 @@ python3 program to manage your VirtualBox machines
 
 usage:
 
-  vbm [-h] 
-  vbm [-l] 
-  vbm [-b B] 
-  vbm [-p P] 
-  vbm [-e E] 
-  vbm [-d D] 
+  vbm [-h]
+  vbm [-l]
+  vbm [-b B]
+  vbm [-p P]
+  vbm [-e E]
+  vbm [-d D]
   vbm [ -i ]
   vbm [-c C] [--clone CLONE]
 
