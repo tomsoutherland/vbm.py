@@ -300,7 +300,7 @@ class VM:
         self.conf = {}
         self.VMParms = ["Guest OS", "Memory size", "Number of CPUs", "State", "Storage Controller Name.*", "UUID",
                         "Boot Device \d", "Storage Controller Type.*", "\w+\s\(\d*,\s\d*\)", "NIC \d", "UART \d",
-                        "Firmware", "Graphics Controller"]
+                        "Firmware", "Graphics Controller", "VRAM size"]
     def display(self):
         print('Name  -> ', self.name)
         for k, v in self.conf.items():
@@ -449,11 +449,10 @@ def get_int(user_prompt):
     user_input = input(user_prompt)
     try:
         tmp = int(user_input)
-        user_input = tmp
     except:
         print(user_input, "is not a number.")
         return -1
-    return user_input
+    return tmp
 def edit_vm(V, D, user_input):
     if V.is_no_such_vm(user_input):
         print("No such VM:", str(user_input))
@@ -591,6 +590,9 @@ def edit_vm(V, D, user_input):
             user_input = get_int("\n\nSelect Graphics Type: ")
             if vopts[user_input]:
                 V.run_with_args(user_selection, 'modifyvm', ['--graphicscontroller',  vopts[user_input]])
+            user_input = get_int("\n\nSelect Graphics Memory (MB): ")
+            if user_input != -1:
+                V.run_with_args(user_selection, 'modifyvm', ['--vram', str(user_input)])
 def vm_select_nicnet(iftype):
     nicnets = {}
     nicips = {}
