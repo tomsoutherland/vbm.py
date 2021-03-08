@@ -178,13 +178,13 @@ class VMS:
             print(pipe.stdout.read())
             sleep(sleeptime)
             VMc.populate()
-    def vm_disk_menu(self, i, detach, D):
-        uuid, VMc = self.locate_vm_menu_selection(i)
+    def vm_disk_menu(self, vmno, diskno, operation, newsize, D):
+        uuid, VMc = self.locate_vm_menu_selection(vmno)
         i = 1
         for k, v in VMc.conf.items():
             match = re.search(r'\S+\s\(\d,\s\d\)', k)
             if match:
-                if detach and detach == i:
+                if operation == 'detach' and diskno == i:
                     k = re.sub('[(),]', '', k)
                     c, p, x = k.split(' ')
                     if c == "IDE":
@@ -199,8 +199,19 @@ class VMS:
                     sleep(sleeptime)
                     VMc.populate()
                     D.populate()
-                elif detach == 0:
-                    print(i,"  ", k, v)
+                elif operation == 'resize' and diskno == i:
+                    match = re.search(r'UUID:(\S+)\)', v)
+                    if match:
+                        pipe = Popen([vbmanage, 'modifymedium', 'disk', match.group(1), '--resize', str(newsize)],
+                                     stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+                        print(pipe.stdout.read())
+                        sleep(sleeptime)
+                        D.populate()
+                elif operation == 'list':
+                    match = re.search(r'UUID:(\S+)\)', v)
+                    if match:
+                        cursize = D.show_disk_size(match.group(1))
+                        print(i,"  ", k, v, cursize)
                 i += 1
     def show_vm_menu(self):
         i = 1
@@ -356,6 +367,8 @@ class DISKS:
         self.populate()
     def show_disk(self, uuid):
         self.disks[uuid].show_disk()
+    def show_disk_size(self, uuid):
+        return self.disks[uuid].show_size()
     def show_all(self, how):
         for disk, D in self.disks.items():
             if how == 'full':
@@ -415,6 +428,8 @@ class DISK:
         print('Location ->', self.props['Location'])
         for key, val in self.conns.items():
             print("Connected to", key, val)
+    def show_size(self):
+        return self.props['Capacity']
 def vm_select_os():
     oslist = {}
     i = 1
@@ -463,7 +478,7 @@ def edit_vm(V, D, user_input):
         V.show_vm_menu_selection(user_selection)
         print("\n"
               "(O) OS  (N) NICs  (C) CPUs  (M) Memory  (S) Add Storage Controller  (D) Delete Storage Controller\n"
-              "(E) Eject CD/DVD  (I) Insert CD/DVD  (A) Attach Disk  (U) Detach Disk\n"
+              "(E) Eject CD/DVD  (I) Insert CD/DVD  (A) Attach Disk  (U) Detach Disk  (R) Resize Disk\n"
               "(B) Boot Order  (G) Video  (F) Firmware Type  (P) Force NMI      (Q) Return to Previous Menu")
         user_input = input("\nCommand Me: ").upper()
         if user_input == "Q":
@@ -533,8 +548,6 @@ def edit_vm(V, D, user_input):
                 V.populate()
                 D.populate()
         elif user_input == "N":
-            #if V.is_vm_running(user_selection):
-            #    continue
             nicn = input("NIC Number? ")
             nictype = vm_select_nictype()
             if nictype == "bridged":
@@ -558,10 +571,18 @@ def edit_vm(V, D, user_input):
         elif user_input == "U":
             if V.is_vm_running(user_selection):
                 continue
-            V.vm_disk_menu(user_selection, 0, D)
-            user_input = get_int("\n Select Disk Number to Detach: ")
-            if user_input:
-                V.vm_disk_menu(user_selection, user_input, D)
+            V.vm_disk_menu(user_selection, 0, 'list', 0, D)
+            diskno = get_int("\n Select Disk Number to Detach: ")
+            if diskno:
+                V.vm_disk_menu(user_selection, diskno, 'detach', 0, D)
+        elif user_input == "R":
+            if V.is_vm_running(user_selection):
+                continue
+            V.vm_disk_menu(user_selection, 0, 'list', 0, D)
+            diskno = get_int("\n Select Disk Number to Resize: ")
+            newsize = get_int("\n Select New Size in MB: ")
+            if diskno and newsize:
+                V.vm_disk_menu(user_selection, diskno, 'resize', newsize, D)
         elif user_input == "A":
             if V.is_vm_running(user_selection):
                 continue
@@ -632,7 +653,6 @@ def create_vm(V, D):
     print(pipe.stdout.read())
     sleep(sleeptime)
     V.populate()
-    edit_vms(V, D)
 def create_disks(V, D):
     howmany = get_int("\nHow many disks? ")
     whatsize = get_int("\nSize in MB? ")
@@ -657,16 +677,14 @@ def create_disks(V, D):
         V.create_and_attach_disks(D, vms, howmany, whatsize, cs[user_input])
         D.populate()
 def delete_vm(V, D):
-    user_input = 99
-    while user_input != 0:
-        print("\n=============== Select VM to Delete ===============\n")
-        V.show_vm_menu()
-        user_input = get_int("\n 0 Return to previous menu\n\nCommand Me: ")
-        if V.is_no_such_vm(user_input):
-            print("No such VM:", str(user_input))
-            return
-        if user_input != 0:
-            V.delete_vm(V, D, user_input)
+    print("\n=============== Select VM to Delete ===============\n")
+    V.show_vm_menu()
+    user_input = get_int("\nSelect VM to Delete\n\nCommand Me: ")
+    if V.is_no_such_vm(user_input):
+        print("No such VM:", str(user_input))
+        return
+    if user_input != 0:
+        V.delete_vm(V, D, user_input)
 def poweroff_vm(V, D):
     user_input = 99
     while user_input != 0:
@@ -715,7 +733,7 @@ def top_menu(V, D):
               "(P) Power Off VM\n"
               "(D) Delete VM\n"
               "(C) Create Disks\n"
-              "(R) Remove Orphaned Disks\n"
+              "(R) Remove Unattached Disks\n"
               "(Q) Exit Program\n"
               "\n")
         user_input = input("Command Me: ").upper()
@@ -751,10 +769,11 @@ def main():
     parser.add_argument('-p', type=int, help='Power Off VM P')
     parser.add_argument('-e', type=int, help='Edit VM E')
     parser.add_argument('-d', type=int, help='Delete VM D')
+    parser.add_argument('-i', action='store_true', help='Interactive Interface')
+    parser.add_argument('--disks', action='store_true', help='List All Disks')
     clone = parser.add_argument_group('clone')
     clone.add_argument('-c', type=int, help="Number of machine to clone.")
     clone.add_argument('--clone', help="Name to use for the new clone.")
-    parser.add_argument('-i', action='store_true', help='Interactive Interface')
     results = parser.parse_args()
     if results.c and results.clone is None:
         parser.error("-c C requires --clone CLONE_NAME")
@@ -784,6 +803,8 @@ def main():
             print("No such VM:", str(results.c))
             return
         V.clone_vm(V, D, results.c, results.clone)
+    elif results.disks:
+        D.show_all('full')
     else:
         top_menu(V, D)
 
