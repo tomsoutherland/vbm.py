@@ -51,3 +51,5 @@ You will need to configure the variables in vbmconfig.py to reflect your environ
 
 You can just check out the project then crete a symbolic link to the 'vbm.py' file in the
 project.
+
+I can be contacted at southerland DOT tom AT gmail DOT com.
