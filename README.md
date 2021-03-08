@@ -5,30 +5,30 @@ python3 program to manage your VirtualBox machines
 
 usage:
 
-  vbm [-h]
-  vbm [-l]
-  vbm [-b B]
-  vbm [-p P]
-  vbm [-e E]
-  vbm [-d D]
-  vbm [ -i ]
-  vbm [-c C] [--clone CLONE]
+  vbm [-h]  
+  vbm [-l]  
+  vbm [-b B]  
+  vbm [-p P]  
+  vbm [-e E]  
+  vbm [-d D]  
+  vbm [ -i ]  
+  vbm [-c C] [--clone CLONE]  
 
 Manage your VirtualBox VMs.
 
 optional arguments:
 
-  -h, --help     show this help message and exit
-  -l             List the VirtualBox VMs
-  -b B           Boot VM B
-  -p P           Power Off VM P
-  -e E           Edit VM E
-  -d D           Delete VM D
-  -i             Interactive Interface
+  -h, --help     show this help message and exit  
+  -l             List the VirtualBox VMs  
+  -b B           Boot VM B  
+  -p P           Power Off VM P  
+  -e E           Edit VM E  
+  -d D           Delete VM D  
+  -i             Interactive Interface  
 
-clone:
-  -c C           Number of machine to clone.
-  --clone CLONE  Name to use for the new clone.
+clone:  
+  -c C           Number of machine to clone.  
+  --clone CLONE  Name to use for the new clone.  
 
 ABOUT
 
