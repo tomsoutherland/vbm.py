@@ -43,7 +43,8 @@ PIPE for console communications.
 
 INSTALL
 
-The program is a single python script expecting to find python3 on your system.
+The program is a single python script with an additional configuration file.
+
 You will need to configure the variables in vbmconfig.py to reflect your environment.
 
 You can just check out the project then crete a symbolic link to the 'vbm.py' file in the
