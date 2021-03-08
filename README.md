@@ -2,6 +2,7 @@
 python3 program to manage your VirtualBox machines
 
 % vbm -h
+
 usage:
 
   vbm [-h] 
@@ -16,6 +17,7 @@ usage:
 Manage your VirtualBox VMs.
 
 optional arguments:
+
   -h, --help     show this help message and exit
   -l             List the VirtualBox VMs
   -b B           Boot VM B
