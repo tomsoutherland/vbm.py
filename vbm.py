@@ -52,7 +52,7 @@ class VMS:
                 vargs = vbheadlessargs.split(' ')
             Popen([vbheadless] + vargs + ["-s", uuid], close_fds=True, shell=False)
             sleep(sleeptime)
-        return pfoo
+        return pfoo, VMc.name
     def poweroff_vm(self, V, D, i):
         uuid, VMc = self.locate_vm_menu_selection(i)
         pipe = Popen([vbmanage, "controlvm", uuid, "poweroff"], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
@@ -235,7 +235,7 @@ class VMS:
         uuid, VMc = self.locate_vm_menu_selection(i)
         if uuid:
             VMc.display()
-    def vm_attach_disk(self, i, controller, disk_uuid):
+    def vm_attach_disk(self, i, controller, disk_uuid, D):
         maxports = {"SCSI":15, "SATA":30, "SAS":255}
         uuid, VMc = self.locate_vm_menu_selection(i)
         needscontroller = 1
@@ -260,6 +260,7 @@ class VMS:
                         print(pipe.stdout.read())
                         sleep(sleeptime)
                         VMc.populate()
+                        D.populate()
                         return
                     else:
                         device += 1
@@ -276,6 +277,7 @@ class VMS:
                     print(pipe.stdout.read())
                     sleep(sleeptime)
                     VMc.populate()
+                    D.populate()
                     return
                 port += 1
         print("Unable to attach", disk_uuid, "to", controller)
@@ -284,21 +286,23 @@ class VMS:
         if len(vms) > 1:
             shared = 1
             ddir = vbdiskdir
+            vmname = 'shared'
         else:
             shared = 0
             uuid, VMc = self.locate_vm_menu_selection(vms[0])
             ddir = vbbasedir + "/" + VMc.name
+            vmname = VMc.name
         j = 0
         while j < howmany:
-            uuid = D.disk_create(whatsize, shared, ddir)
+            uuid = D.disk_create(whatsize, shared, ddir, vmname)
             for i in vms:
-                self.vm_attach_disk(i, controller, uuid)
+                self.vm_attach_disk(i, controller, uuid, D)
             j += 1
     def show_attachable_disks(self, D, i, attach, controller):
         uuid, VMc = self.locate_vm_menu_selection(i)
         Duuid = D.show_attachable_disks(uuid, attach)
         if Duuid and attach:
-            self.vm_attach_disk(i, controller, Duuid)
+            self.vm_attach_disk(i, controller, Duuid, D)
             VMc.populate()
             D.populate()
     def is_no_such_vm(self,i):
@@ -378,10 +382,9 @@ class DISKS:
                 D.show_disk()
             if how == 'brief':
                 D.show_disk_brief()
-    def disk_create(self, size, shared, ddir):
-        foo = ddir + '/' + datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f") + '.vdi'
-        print(foo)
+    def disk_create(self, size, shared, ddir, vmname):
         if shared:
+            foo = ddir + '/' + 'shared' + datetime.datetime.now().strftime("_%Y%m%d%H%M%S") + '.vdi'
             pipe = Popen(
                 [vbmanage, 'createmedium', 'disk', '--filename', foo, '--size', str(size), '--format', 'VDI', '--variant',
                  'Fixed'], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
@@ -392,6 +395,7 @@ class DISKS:
             sleep(sleeptime)
             self.populate()
         else:
+            foo = ddir + '/' + vmname + datetime.datetime.now().strftime("_%Y%m%d%H%M%S") + '.vdi'
             pipe = Popen(
                 [vbmanage, "createmedium", "disk", "--filename", foo, "--size", str(size), "--format", "VDI", "--variant",
                  "Standard"], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
@@ -700,7 +704,7 @@ def poweroff_vm(V, D):
                 print("No such VM:", str(user_input))
                 return
             V.poweroff_vm(V, D, user_input)
-def boot_vm(V, D):
+def boot_vm(V, D, L):
     user_input = 99
     while user_input != 0:
         print("\n=============== Select VM to Boot ===============\n")
@@ -712,9 +716,9 @@ def boot_vm(V, D):
                 return 0
             if V.is_vm_running(user_input):
                 return 1
-            pfoo = V.boot_vm(V, D, user_input, vrde=0)
+            pfoo, vmname = V.boot_vm(V, D, user_input, vrde=0)
             if pfoo:
-                vm_console(pfoo)
+                vm_console(pfoo, vmname, L)
 def clone_vm(V, D):
     print("\n=============== Select VM to Clone ===============\n")
     V.show_vm_menu()
@@ -725,7 +729,7 @@ def clone_vm(V, D):
     newvm = input("\nEnter Clone Name: ")
     if user_input != 0:
         V.clone_vm(V, D, user_input, newvm)
-def top_menu(V, D):
+def top_menu(V, D, L):
     user_input = ""
     while user_input != "Q":
         print("=============== Top Menu ===============\n"
@@ -754,10 +758,10 @@ def top_menu(V, D):
         elif user_input == "D":
             delete_vm(V, D)
         elif user_input == "B":
-            boot_vm(V, D)
+            boot_vm(V, D, L)
         elif user_input == "P":
             poweroff_vm(V, D)
-def vm_console(pfoo):
+def vm_console(pfoo, vmname, L):
     pipe = Popen(['ps', 'ax'], stdin=None, stderr=None, stdout=PIPE, universal_newlines=True, encoding='utf-8')
     for line in pipe.stdout:
         match = re.search(fr'(^\d+).*{pfoo}', line)
@@ -765,6 +769,8 @@ def vm_console(pfoo):
             print(" console in use by", match.group(1), "\n")
             return
     print("Connected to", pfoo)
+    print("\033]0;%s\007" % (vmname), end=None)
+    L.release()
     execv(socat, ["socat", socatargs, pfoo])
 def get_lock():
     pass
@@ -794,9 +800,9 @@ def main():
     if results.l:
         V.show_vm_menu()
     elif results.b:
-        pfoo = V.boot_vm(V, D, results.b, 0)
+        pfoo, vmname = V.boot_vm(V, D, results.b, 0)
         if pfoo:
-            vm_console(pfoo)
+            vm_console(pfoo, vmname, L)
     elif results.p:
         V.poweroff_vm(V, D, results.p)
     elif results.e:
@@ -807,7 +813,7 @@ def main():
             return
         V.delete_vm(V, D, results.d)
     elif results.i:
-        top_menu(V, D)
+        top_menu(V, D, L)
     elif results.c:
         if V.is_no_such_vm(results.c):
             print("No such VM:", str(results.c))
@@ -816,7 +822,7 @@ def main():
     elif results.disks:
         D.show_all('full')
     else:
-        top_menu(V, D)
+        top_menu(V, D, L)
     L.release()
 
 if __name__ == '__main__':
