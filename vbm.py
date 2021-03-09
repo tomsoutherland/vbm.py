@@ -182,6 +182,8 @@ class VMS:
         uuid, VMc = self.locate_vm_menu_selection(vmno)
         i = 1
         for k, v in VMc.conf.items():
+            if re.search(r'\.iso ', v):
+                continue
             match = re.search(r'\S+\s\(\d,\s\d\)', k)
             if match:
                 if operation == 'detach' and diskno == i:
