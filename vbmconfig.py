@@ -19,3 +19,5 @@ socat = "/usr/local/bin/socat"
 socatargs = "-,raw,echo=0,escape=0x1d"
 # Time to wait after running a virtualbox command.
 sleeptime = 1
+# Path to the lockfile
+lockfoo = "/var/tmp/vbm"

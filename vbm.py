@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
 
-from vbmconfig import isodir, vbbasedir, vbdiskdir, vbheadless, vbheadlessargs, vbmanage, socat, socatargs, sleeptime
+from vbmconfig import isodir, vbbasedir, vbdiskdir, vbheadless, vbheadlessargs, vbmanage, socat, socatargs, sleeptime, lockfoo
 import re, datetime, sys, argparse
 from subprocess import Popen, PIPE, STDOUT
 from time import sleep
 from os import execv, listdir
 from os.path import isfile, join
+from FileLock import FileLock
 
 class VMS:
     def __init__(self):
@@ -182,7 +183,7 @@ class VMS:
         uuid, VMc = self.locate_vm_menu_selection(vmno)
         i = 1
         for k, v in VMc.conf.items():
-            if re.search(r'\.iso ', v):
+            if re.search(r'\.iso ', v) or v == 'Empty':
                 continue
             match = re.search(r'\S+\s\(\d,\s\d\)', k)
             if match:
@@ -432,6 +433,7 @@ class DISK:
             print("Connected to", key, val)
     def show_size(self):
         return self.props['Capacity']
+
 def vm_select_os():
     oslist = {}
     i = 1
@@ -764,7 +766,13 @@ def vm_console(pfoo):
             return
     print("Connected to", pfoo)
     execv(socat, ["socat", socatargs, pfoo])
+def get_lock():
+    pass
+def rel_lock():
+    pass
 def main():
+    L = FileLock(lockfoo)
+    L.acquire()
     parser = argparse.ArgumentParser(description='Manage your VirtualBox VMs.')
     parser.add_argument('-l', action='store_true', help='List the VirtualBox VMs.')
     parser.add_argument('-b', type=int, help='Boot VM B')
@@ -809,6 +817,7 @@ def main():
         D.show_all('full')
     else:
         top_menu(V, D)
+    L.release()
 
 if __name__ == '__main__':
     main()
