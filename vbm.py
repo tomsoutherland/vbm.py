@@ -729,7 +729,7 @@ def delete_vm(V, D):
         if ask_confirm('Delete ' + vname + ' ? '):
             V.delete_vm(V, D, user_input)
     elif user_input:
-        print("No such VM:", str(user_input))
+        print("\nNo such VM:", str(user_input))
 def poweroff_vm(V, D):
     user_input = 99
     while user_input != 0:
