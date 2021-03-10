@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 
-from vbmconfig import isodir, vbbasedir, vbdiskdir, vbheadless, vbheadlessargs, vbmanage, socat, socatargs, sleeptime, lockfoo
-import re, datetime, sys, argparse
+from vbmconfig import isodir, vbbasedir, vbdiskdir, vbheadless, vbheadlessargs, vbmanage, socat, socatargs, \
+    sleeptime, lockfoo
+import re, datetime, argparse
 from subprocess import Popen, PIPE, STDOUT
 from time import sleep
-from os import execv, listdir
+from os import execv, listdir, remove
+from glob import glob
 from os.path import isfile, join
 from FileLock import FileLock
 
@@ -80,6 +82,28 @@ class VMS:
         sleep(sleeptime)
         del VMc
         del V.VMSlist[uuid]
+        V.populate()
+        D.populate()
+    def remove_controller(self, V, D, i, cname):
+        uuid, VMc = self.locate_vm_menu_selection(i)
+        for k, v in VMc.conf.items():
+            match = re.search(r'' + cname + ' \((\d+), (\d+)\)', k)
+            if match:
+                p = match.group(1)
+                x = match.group(2)
+                if cname == 'IDE':
+                    print(f"Detach {v} on {cname} ({p}, ({x})")
+                    pipe = Popen([vbmanage, 'storageattach', uuid, '--storagectl', cname, '--port', p, '--device', x,
+                                  '--medium', 'none'], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+                    print(pipe.stdout.read())
+                else:
+                    print(f"detach {v} on {cname} port {p}")
+                    pipe = Popen([vbmanage, 'storageattach', uuid, '--storagectl', cname, '--port', p,
+                                  '--medium', 'none'], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+                    print(pipe.stdout.read())
+        print(f"Remove controller {cname}")
+        pipe = Popen([vbmanage, 'storagectl', uuid, '--name', cname, '--remove'], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+        print(pipe.stdout.read())
         V.populate()
         D.populate()
     def eject_iso(self, i):
@@ -252,7 +276,7 @@ class VMS:
                 device = 0
                 while device < 2:
                     if not controller + " (" + str(port) + ", " + str(device) + ")" in VMc.conf:
-                        print("Attaching disk to " + controller + " (" + str(port) + ", " + str(device) + ")")
+                        print("Attaching disk to " + VMc.name, controller + " (" + str(port) + ", " + str(device) + ")")
                         pipe = Popen(
                             [vbmanage, 'storageattach', uuid, '--storagectl', 'IDE', '--port', str(port), '--device',
                              str(device), '--type', 'hdd', '--medium', disk_uuid], stdout=PIPE, stderr=STDOUT,
@@ -270,7 +294,7 @@ class VMS:
             port = 0
             while port < maxp:
                 if not controller + " (" + str(port) + ", 0)" in VMc.conf:
-                    print("Attaching disk to " + controller + " (" + str(port) + ", 0)")
+                    print("Attaching disk to " + VMc.name, controller + " (" + str(port) + ", 0)")
                     pipe = Popen(
                         [vbmanage, 'storageattach', uuid, '--storagectl', controller, '--port', str(port), '--type',
                          'hdd', '--medium', disk_uuid], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
@@ -305,12 +329,12 @@ class VMS:
             self.vm_attach_disk(i, controller, Duuid, D)
             VMc.populate()
             D.populate()
-    def is_no_such_vm(self,i):
+    def is_valid_vm(self,i):
         uuid, VMc = self.locate_vm_menu_selection(i)
         if uuid:
-            return 0
+            return VMc.name
         else:
-            return 1
+            return None
 class VM:
     def __init__(self, name, uuid):
         self.name = name
@@ -372,6 +396,20 @@ class DISKS:
                 del D
                 del self.disks[disk]
         self.populate()
+        foos = glob(join(vbbasedir, "*/*.vdi"))
+        for foo in foos:
+            if isfile(foo):
+                purge = 1
+                for disk, D in self.disks.items():
+                    if D.props['Location'] == foo:
+                        purge = 0
+                        continue
+                if purge:
+                    try:
+                        remove(foo)
+                        print("Removed orphaned disk", foo)
+                    except:
+                        print("Encountered error removing", foo)
     def show_disk(self, uuid):
         self.disks[uuid].show_disk()
     def show_disk_size(self, uuid):
@@ -464,7 +502,7 @@ def edit_vms(V, D):
     if user_input == -1:
         return
     if user_input != 0:
-        if V.is_no_such_vm(user_input):
+        if V.is_valid_vm(user_input) == None:
             print("No such VM:", str(user_input))
             return
         edit_vm(V, D, user_input)
@@ -477,7 +515,7 @@ def get_int(user_prompt):
         return -1
     return tmp
 def edit_vm(V, D, user_input):
-    if V.is_no_such_vm(user_input):
+    if V.is_valid_vm(user_input) == None:
         print("No such VM:", str(user_input))
         return
     user_selection = user_input
@@ -551,10 +589,8 @@ def edit_vm(V, D, user_input):
             if V.is_vm_running(user_selection):
                 continue
             user_input = get_int("Delete  (1) IDE  (2) SATA  (3) SCSI  (4) SAS ")
-            if user_input and user_input < 5:
-                V.run_with_args(user_selection, 'storagectl', ['--remove', '--name', cs[user_input]])
-                V.populate()
-                D.populate()
+            if user_input and user_input < 5 and ask_confirm('Delete Controller ' + cs[user_input] + ' ? '):
+                V.remove_controller(V, D, user_selection, cs[user_input])
         elif user_input == "N":
             nicn = input("NIC Number? ")
             nictype = vm_select_nictype()
@@ -671,7 +707,7 @@ def create_disks(V, D):
         V.show_vm_menu()
         print("\nSelected: ", vms)
         user_input = get_int("\n 0 When done\n\nCommand Me: ")
-        if V.is_no_such_vm(user_input):
+        if V.is_valid_vm(user_input) == None:
             if user_input:
                 print("No such VM:", str(user_input))
             continue
@@ -681,18 +717,19 @@ def create_disks(V, D):
         return
     cs = {1: "IDE", 2: "SATA", 3: "SCSI", 4: "SAS"}
     user_input = get_int("Add  (1) IDE  (2) SATA  (3) SCSI  (4) SAS ")
-    if user_input and user_input < 5:
+    if user_input and user_input < 5 and ask_confirm('Create ' + str(howmany) + ' disks and attach? '):
         V.create_and_attach_disks(D, vms, howmany, whatsize, cs[user_input])
         D.populate()
 def delete_vm(V, D):
     print("\n=============== Select VM to Delete ===============\n")
     V.show_vm_menu()
     user_input = get_int("\nSelect VM to Delete\n\nCommand Me: ")
-    if V.is_no_such_vm(user_input):
+    vname = V.is_valid_vm(user_input)
+    if vname != None:
+        if ask_confirm('Delete ' + vname + ' ? '):
+            V.delete_vm(V, D, user_input)
+    elif user_input:
         print("No such VM:", str(user_input))
-        return
-    if user_input != 0:
-        V.delete_vm(V, D, user_input)
 def poweroff_vm(V, D):
     user_input = 99
     while user_input != 0:
@@ -700,7 +737,7 @@ def poweroff_vm(V, D):
         V.show_vm_menu()
         user_input = get_int("\n 0 Return to previous menu\n\nCommand Me: ")
         if user_input != 0:
-            if V.is_no_such_vm(user_input):
+            if V.is_valid_vm(user_input) == None:
                 print("No such VM:", str(user_input))
                 return
             V.poweroff_vm(V, D, user_input)
@@ -711,7 +748,7 @@ def boot_vm(V, D, L):
         V.show_vm_menu()
         user_input = get_int("\n 0 Return to previous menu\n\nCommand Me: ")
         if user_input != 0:
-            if V.is_no_such_vm(user_input):
+            if V.is_valid_vm(user_input) == None:
                 print("No such VM:", str(user_input))
                 return 0
             if V.is_vm_running(user_input):
@@ -723,11 +760,12 @@ def clone_vm(V, D):
     print("\n=============== Select VM to Clone ===============\n")
     V.show_vm_menu()
     user_input = get_int("\n 0 Return to previous menu\n\nCommand Me: ")
-    if V.is_no_such_vm(user_input):
+    vmname = V.is_valid_vm(user_input)
+    if vmname == None:
         print("No such VM:", str(user_input))
         return
     newvm = input("\nEnter Clone Name: ")
-    if user_input != 0:
+    if ask_confirm('\nProceed with clone ' + vmname + ' to ' + newvm + '? '):
         V.clone_vm(V, D, user_input, newvm)
 def top_menu(V, D, L):
     user_input = ""
@@ -761,6 +799,16 @@ def top_menu(V, D, L):
             boot_vm(V, D, L)
         elif user_input == "P":
             poweroff_vm(V, D)
+def ask_confirm(prompt):
+    user_input = '-'
+    while user_input != 'Y' or user_input != 'N':
+        user_input = input(prompt).upper()
+        if user_input == 'Y':
+            return True
+        elif user_input == 'N':
+            return False
+        else:
+            print("\nPlease respond (Y or N)\n")
 def vm_console(pfoo, vmname, L):
     pipe = Popen(['ps', 'ax'], stdin=None, stderr=None, stdout=PIPE, universal_newlines=True, encoding='utf-8')
     for line in pipe.stdout:
@@ -772,10 +820,6 @@ def vm_console(pfoo, vmname, L):
     print("\033]0;%s\007" % (vmname), end=None)
     L.release()
     execv(socat, ["socat", socatargs, pfoo])
-def get_lock():
-    pass
-def rel_lock():
-    pass
 def main():
     L = FileLock(lockfoo)
     L.acquire()
@@ -785,11 +829,16 @@ def main():
     parser.add_argument('-p', type=int, help='Power Off VM P')
     parser.add_argument('-e', type=int, help='Edit VM E')
     parser.add_argument('-d', type=int, help='Delete VM D')
-    parser.add_argument('-i', action='store_true', help='Interactive Interface')
-    parser.add_argument('--disks', action='store_true', help='List All Disks')
+    disks = parser.add_argument_group('disks')
+    disks.add_argument('--disks', action='store_true', help='List All Disks')
+    disks_o = disks.add_mutually_exclusive_group()
+    disks_o.add_argument('--brief', action='store_true', help='Shorter disk list')
+    disks_o.add_argument('--full', action='store_true', help='Include all disk details in list')
     clone = parser.add_argument_group('clone')
     clone.add_argument('-c', type=int, help="Number of machine to clone.")
     clone.add_argument('--clone', help="Name to use for the new clone.")
+    parser.add_argument('-i', action='store_true', help='Interactive Interface')
+    parser.add_argument('-y', action='store_true', help='Do not ask, assume YES')
     results = parser.parse_args()
     if results.c and results.clone is None:
         parser.error("-c C requires --clone CLONE_NAME")
@@ -800,29 +849,49 @@ def main():
     if results.l:
         V.show_vm_menu()
     elif results.b:
-        pfoo, vmname = V.boot_vm(V, D, results.b, 0)
-        if pfoo:
-            vm_console(pfoo, vmname, L)
+        vmname = V.is_valid_vm(results.b)
+        if vmname is not None:
+            pfoo, vmname = V.boot_vm(V, D, results.b, 0)
+            if pfoo:
+                vm_console(pfoo, vmname, L)
+        else:
+            print('No such VM', str(results.b))
     elif results.p:
         V.poweroff_vm(V, D, results.p)
     elif results.e:
         edit_vm(V, D, results.e)
     elif results.d:
-        if V.is_no_such_vm(results.d):
+        vmname = V.is_valid_vm(results.d)
+        if vmname == None:
             print("No such VM:", str(results.d))
             return
+        if not results.y:
+            if not ask_confirm('\nDelete ' + vmname + ' ? '):
+                return
+        print(f"Delete {vmname}")
         V.delete_vm(V, D, results.d)
     elif results.i:
         top_menu(V, D, L)
     elif results.c:
-        if V.is_no_such_vm(results.c):
+        vmname = V.is_valid_vm(results.c)
+        if vmname == None:
             print("No such VM:", str(results.c))
             return
+        if not results.y:
+            if not ask_confirm('\nClone ' + vmname + ' to ' + results.clone + ' ? '):
+                return
+        print(f"Clone {vmname} to {results.clone}")
         V.clone_vm(V, D, results.c, results.clone)
     elif results.disks:
-        D.show_all('full')
+        if results.brief:
+            D.show_all('brief')
+        elif results.full:
+            D.show_all('full')
+        else:
+            D.show_all('full')
     else:
-        top_menu(V, D, L)
+        V.show_vm_menu()
+        parser.print_usage()
     L.release()
 
 if __name__ == '__main__':
