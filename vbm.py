@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 
-
-from vbmconfig import isodir, vbbasedir, vbdiskdir, vbheadless, vbheadlessargs, vbmanage, socat, socatargs, \
-    sleeptime, lockfoo
-import re, datetime, argparse
+import re, datetime, argparse, os
+from os.path import isfile, join, realpath, dirname
+from configparser import ConfigParser, ExtendedInterpolation
 from subprocess import Popen, PIPE, STDOUT
 from time import sleep
 from os import execv, listdir, remove
 from glob import glob
-from os.path import isfile, join
 from FileLock import FileLock
 
 class VMS:
@@ -38,7 +36,7 @@ class VMS:
             return 0
         pfoo = "/tmp/vb-" + VMc.name + "-console"
         if self.is_vm_running(i):
-            return pfoo
+            return pfoo, VMc.name
         else:
             pipe = Popen([vbmanage, "modifyvm", uuid, "--uartmode1", "server", pfoo], stdout=PIPE,
                          stderr=STDOUT, encoding='utf-8')
@@ -49,7 +47,7 @@ class VMS:
             VMc.populate()
             print("booting " + VMc.name)
             if vrde:
-                vargs = "--vrde on --vrdeproperty TCP/Ports=3389-3400".split(' ')
+                vargs = vrdeargs.split(' ')
             else:
                 vargs = vbheadlessargs.split(' ')
             Popen([vbheadless] + vargs + ["-s", uuid], close_fds=True, shell=False)
@@ -592,26 +590,50 @@ def edit_vm(V, D, user_input):
             if user_input and user_input < 5 and ask_confirm('Delete Controller ' + cs[user_input] + ' ? '):
                 V.remove_controller(V, D, user_selection, cs[user_input])
         elif user_input == "N":
+            isrunning = V.is_vm_running(user_selection)
             nicn = input("NIC Number? ")
             nictype = vm_select_nictype()
             if nictype == "bridged":
                 nicnet = vm_select_nicnet("bridgedifs")
-                V.run_with_args(user_selection, 'modifyvm',
+                if isrunning:
+                    V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
+                else:
+                    V.run_with_args(user_selection, 'modifyvm',
                                 ['--nic' + nicn, nictype, '--bridgeadapter' + nicn, nicnet])
             elif nictype == "hostonly":
                 nicnet = vm_select_nicnet("hostonlyifs")
-                V.run_with_args(user_selection, 'modifyvm',
+                if isrunning:
+                    V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
+                else:
+                    V.run_with_args(user_selection, 'modifyvm',
                                 ['--nic' + nicn, nictype, '--hostonlyadapter' + nicn, nicnet])
             elif nictype == "natnetwork":
                 nicnet = vm_select_nicnet("natnets")
-                V.run_with_args(user_selection, 'modifyvm',
+                if isrunning:
+                    V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
+                else:
+                    V.run_with_args(user_selection, 'modifyvm',
                                 ['--nic' + nicn, nictype, '--nat-network' + nicn, nicnet])
             elif nictype == "nat":
                 nicnet = vm_select_nicnet("natnets")
-                V.run_with_args(user_selection, 'modifyvm',
+                if isrunning:
+                    V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
+                else:
+                    V.run_with_args(user_selection, 'modifyvm',
                                 ['--nic' + nicn, nictype, '--natnet' + nicn, nicnet])
             elif nictype == "none":
-                V.run_with_args(user_selection, 'modifyvm', ['--nic' + nicn, 'none'])
+                if isrunning:
+                    print('VM is running. Can only toggle link state')
+                    resp = input('Toggle off? [Y/N] ').upper()
+                    if resp == 'Y':
+                        V.run_with_args(user_selection, 'controlvm', ['setlinkstate' + nicn, 'off'])
+                        continue
+                    resp = input('Toggle on? [Y/N] ').upper()
+                    if resp == 'Y':
+                        V.run_with_args(user_selection, 'controlvm', ['setlinkstate' + nicn, 'on'])
+                        continue
+                else:
+                    V.run_with_args(user_selection, 'modifyvm', ['--nic' + nicn, 'none'])
         elif user_input == "U":
             if V.is_vm_running(user_selection):
                 continue
@@ -820,23 +842,62 @@ def vm_console(pfoo, vmname, L):
     print("\033]0;%s\007" % (vmname), end=None)
     L.release()
     execv(socat, ["socat", socatargs, pfoo])
+def init_config_vars():
+    ppath = (dirname(realpath(__file__)))
+    config = ConfigParser(interpolation=ExtendedInterpolation())
+    try:
+        config.read_file(open(join(ppath, 'vbm.ini'), 'rt', encoding='utf-8'))
+    except:
+        print('Unable to read configuration file, vbm.ini')
+        return
+    global isodir
+    global vbbasedir
+    global vbdiskdir
+    global vbheadless
+    global vbheadlessargs
+    global vrdeargs
+    global vbmanage
+    global socat
+    global socatargs
+    global sleeptime
+    global lockfoo
+    for key, val in config.items('vbm'):
+        if key == 'isodir' : isodir = config['vbm']['isodir']
+        if key == 'vbbasedir' : vbbasedir = config['vbm']['vbbasedir']
+        if key == 'vbdiskdir' : vbdiskdir = config['vbm']['vbdiskdir']
+        if key == 'vbheadless' : vbheadless = config['vbm']['vbheadless']
+        if key == 'vbheadlessargs' : vbheadlessargs = config['vbm']['vbheadlessargs']
+        if key == 'vrdeargs': vrdeargs = config['vbm']['vrdeargs']
+        if key == 'vbmanage' : vbmanage = config['vbm']['vbmanage']
+        if key == 'socat' : socat = config['vbm']['socat']
+        if key == 'socatargs' : socatargs = config['vbm']['socatargs']
+        if key == 'sleeptime' : sleeptime = int(config['vbm']['sleeptime'])
+        if key == 'lockfoo' : lockfoo = config['vbm']['lockfoo']
+    return 0
 def main():
+    init_config_vars()
     L = FileLock(lockfoo)
     L.acquire()
     parser = argparse.ArgumentParser(description='Manage your VirtualBox VMs.')
     parser.add_argument('-l', action='store_true', help='List the VirtualBox VMs.')
-    parser.add_argument('-b', type=int, help='Boot VM B')
-    parser.add_argument('-p', type=int, help='Power Off VM P')
-    parser.add_argument('-e', type=int, help='Edit VM E')
-    parser.add_argument('-d', type=int, help='Delete VM D')
+    parser.add_argument('-p', type=int, help='Power Off VM N', metavar='N')
+    parser.add_argument('-e', type=int, help='Edit VM N', metavar='N')
+    parser.add_argument('-d', type=int, help='Delete VM N', metavar='N')
+
+    boot = parser.add_argument_group('boot')
+    boot.add_argument('-b', type=int, help='Boot VM N', metavar='N')
+    boot.add_argument('-g', action='store_true', default=False, help='Enable VRDE (' + vrdeargs + ')')
+
+    clone = parser.add_argument_group('clone')
+    clone.add_argument('-c', type=int, help='Create a clone of VM N', metavar='N')
+    clone.add_argument('--clone', help="Name to use for the new clone.")
+
     disks = parser.add_argument_group('disks')
     disks.add_argument('--disks', action='store_true', help='List All Disks')
     disks_o = disks.add_mutually_exclusive_group()
     disks_o.add_argument('--brief', action='store_true', help='Shorter disk list')
     disks_o.add_argument('--full', action='store_true', help='Include all disk details in list')
-    clone = parser.add_argument_group('clone')
-    clone.add_argument('-c', type=int, help="Number of machine to clone.")
-    clone.add_argument('--clone', help="Name to use for the new clone.")
+
     parser.add_argument('-i', action='store_true', help='Interactive Interface')
     parser.add_argument('-y', action='store_true', help='Do not ask, assume YES')
     results = parser.parse_args()
@@ -851,7 +912,7 @@ def main():
     elif results.b:
         vmname = V.is_valid_vm(results.b)
         if vmname is not None:
-            pfoo, vmname = V.boot_vm(V, D, results.b, 0)
+            pfoo, vmname = V.boot_vm(V, D, results.b, results.g)
             if pfoo:
                 vm_console(pfoo, vmname, L)
         else:
