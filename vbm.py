@@ -582,7 +582,10 @@ def edit_vm(V, D, user_input):
             if user_input and user_input < 5:
                 C = cs[user_input]
                 c = cs[user_input].lower()
-                V.run_with_args(user_selection, 'storagectl', ['--add', c, '--name', C])
+                if c == 'ide':
+                    V.run_with_args(user_selection, 'storagectl', ['--add', c, '--name', C, '--controller', 'PIIX3'])
+                else:
+                    V.run_with_args(user_selection, 'storagectl', ['--add', c, '--name', C])
         elif user_input == "D":
             if V.is_vm_running(user_selection):
                 continue

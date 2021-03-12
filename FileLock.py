@@ -1,6 +1,4 @@
 import os
-import errno
-
 
 class FileLockException(Exception):
     pass
