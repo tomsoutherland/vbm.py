@@ -207,7 +207,7 @@ class VMS:
         for k, v in VMc.conf.items():
             if re.search(r'\.iso ', v) or v == 'Empty':
                 continue
-            match = re.search(r'\S+\s\(\d,\s\d\)', k)
+            match = re.search(r'\S+\s\(\d+,\s\d+\)', k)
             if match:
                 if operation == 'detach' and diskno == i:
                     k = re.sub('[(),]', '', k)
@@ -343,8 +343,19 @@ class VM:
                         "Firmware", "Graphics Controller", "VRAM size"]
     def display(self):
         print('Name  -> ', self.name)
+        nicf = ['Attachment', 'Cable', 'Type']
         for k, v in self.conf.items():
+            if re.search('NIC', k):
+                for field in re.split(',', v):
+                    #print(field)
+                    if re.search('MAC', field):
+                        nics = field
+                    for p in nicf:
+                        if re.search(p, field):
+                            nics = nics + ',' + field
+                v = nics
             print(k, ' -> ', v)
+
     def populate(self):
         self.conf = {}
         pipe = Popen([vbmanage, "showvminfo", self.uuid], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
@@ -554,7 +565,7 @@ def edit_vm(V, D, user_input):
             onlyfiles = [f for f in listdir(isodir) if isfile(join(isodir, f))]
             i = 0
             for f in onlyfiles:
-                print(i, " - ", join(isodir, f))
+                print('{:>2}'.format(str(i)), " - ", f)
                 i += 1
             dvd = input("ISO Number (or Name)? ")
             if dvd.isnumeric():
@@ -595,6 +606,9 @@ def edit_vm(V, D, user_input):
         elif user_input == "N":
             isrunning = V.is_vm_running(user_selection)
             nicn = input("NIC Number? ")
+            nicmodels = { 1:'Am79C970A', 2:'Am79C973', 3:'Am79C960', 4:'82540EM', 5:'82543GC', 6:'82545EM', 7:'virtio' }
+            nicmodel = get_int("NIC Model " + str(nicmodels) + " ? ")
+            nicm = nicmodels[nicmodel]
             nictype = vm_select_nictype()
             if nictype == "bridged":
                 nicnet = vm_select_nicnet("bridgedifs")
@@ -602,28 +616,28 @@ def edit_vm(V, D, user_input):
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--bridgeadapter' + nicn, nicnet])
+                                ['--nic' + nicn, nictype, '--bridgeadapter' + nicn, nicnet, '--nictype' + nicn, nicm])
             elif nictype == "hostonly":
                 nicnet = vm_select_nicnet("hostonlyifs")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--hostonlyadapter' + nicn, nicnet])
+                                ['--nic' + nicn, nictype, '--hostonlyadapter' + nicn, nicnet, '--nictype' + nicn, nicm])
             elif nictype == "natnetwork":
                 nicnet = vm_select_nicnet("natnets")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--nat-network' + nicn, nicnet])
+                                ['--nic' + nicn, nictype, '--nat-network' + nicn, nicnet, '--nictype' + nicn, nicm])
             elif nictype == "nat":
                 nicnet = vm_select_nicnet("natnets")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--natnet' + nicn, nicnet])
+                                ['--nic' + nicn, nictype, '--natnet' + nicn, nicnet, '--nictype' + nicn, nicm])
             elif nictype == "none":
                 if isrunning:
                     print('VM is running. Can only toggle link state')
