@@ -2,33 +2,31 @@
 python3 program to manage your VirtualBox machines
 
 % vbm -h
-
-usage:
-
-  vbm [-h]  
-  vbm [-l]  
-  vbm [-b B]  
-  vbm [-p P]  
-  vbm [-e E]  
-  vbm [-d D]  
-  vbm [ -i ]  
-  vbm [-c C] [--clone CLONE]  
+usage: vbm [-h] [-l] [-p N] [-e N] [-d N] [-b N] [-g] [-c N] [--clone CLONE] [--disks] [--brief | --full] [-i] [-y]
 
 Manage your VirtualBox VMs.
 
-optional arguments:
-
+optional arguments:  
   -h, --help     show this help message and exit  
-  -l             List the VirtualBox VMs  
-  -b B           Boot VM B  
-  -p P           Power Off VM P  
-  -e E           Edit VM E  
-  -d D           Delete VM D  
+  -l             List the VirtualBox VMs.  
+  -p N           Power Off VM N  
+  -e N           Edit VM N  
+  -d N           Delete VM N  
   -i             Interactive Interface  
+  -y             Do not ask, assume YES  
+
+boot:  
+  -b N           Boot VM N  
+  -g             Enable VRDE (--vrde on --vrdeproperty TCP/Ports=3389-3400)  
 
 clone:  
-  -c C           Number of machine to clone.  
+  -c N           Create a clone of VM N  
   --clone CLONE  Name to use for the new clone.  
+
+disks:  
+  --disks        List All Disks  
+  --brief        Shorter disk list  
+  --full         Include all disk details in list  
 
 ABOUT
 
