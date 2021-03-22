@@ -7,26 +7,26 @@ usage: vbm [-h] [-l] [-p N] [-e N] [-d N] [-b N] [-g] [-c N] [--clone CLONE] [--
 Manage your VirtualBox VMs.
 
 optional arguments:  
-  -h, --help     show this help message and exit  
-  -l             List the VirtualBox VMs.  
-  -p N           Power Off VM N  
-  -e N           Edit VM N  
-  -d N           Delete VM N  
-  -i             Interactive Interface  
-  -y             Do not ask, assume YES  
+  -h, --help       show this help message and exit  
+  -l               List the VirtualBox VMs.  
+  -p N             Power Off VM N  
+  -e N             Edit VM N  
+  -d N             Delete VM N  
+  -i               Interactive Interface  
+  -y               Do not ask, assume YES  
 
 boot:  
-  -b N           Boot VM N  
-  -g             Enable VRDE (--vrde on --vrdeproperty TCP/Ports=3389-3400)  
+  -b N             Boot VM N  
+  -g               Enable VRDE (--vrde on --vrdeproperty TCP/Ports=3389-3400)  
 
 clone:  
-  -c N           Create a clone of VM N  
-  --clone CLONE  Name to use for the new clone.  
+  -c N             Create a clone of VM N  
+  --clone CLONE    Name to use for the new clone.  
 
 disks:  
-  --disks        List All Disks  
-  --brief        Shorter disk list  
-  --full         Include all disk details in list  
+  --disks          List All Disks  
+  --brief          Shorter disk list  
+  --full           Include all disk details in list  
 
 ABOUT
 
