@@ -14,6 +14,35 @@ class VMS:
         self.VM_max_len = 1
         self.vmlist = {}
         self.VMSlist = {}
+
+    def vbox_sync_config(self):
+        foodict = {}
+        vbdict = {}
+        pipe = Popen([vbmanage, "list", "-s", "vms"], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+        for line in pipe.stdout:
+            match = re.search(r'\"(.*)\"\s{(.*)}', line.rstrip())
+            if match:
+                vbdict.update({match.group(2): match.group(1)})
+        foos = glob(join(vbbasedir, "*/*.vbox"))
+        for foo in foos:
+            f = open(foo)
+            for line in f:
+                match = re.search(r'Machine uuid="{(\S+)}" name="([A-Za-z0-9 \-]+)"', line)
+                if match:
+                    foodict.update({match.group(1): foo})
+                    f.close
+                    break
+        for k, v in vbdict.copy().items():
+            if v == "<inaccessible>":
+                print("Unregistering ", k, v)
+                Popen([vbmanage, "unregistervm", k], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+                del vbdict[k]
+        for k, v in foodict.items():
+            if not k in vbdict:
+                print("Registering ", k, v)
+                pipe = Popen([vbmanage, "registervm", v], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+                print(pipe.stdout.read())
+
     def clone_vm(self, V, D, i, newvm):
         uuid, VMc = self.locate_vm_menu_selection(i)
         pipe = Popen([vbmanage, "clonevm", uuid, "--basefolder=" + vbbasedir, "--name=" + newvm, "--register"],
@@ -241,8 +270,12 @@ class VMS:
     def show_vm_menu(self):
         i = 1
         for uuid, VMc in self.VMSlist.items():
+            if not "State" in VMc.conf:
+                print("\nERROR: Syncing VirtualBox with on disk configuration\n")
+                self.vbox_sync_config()
+                exit(1)
             mystr = VMc.conf["State"]
-            print('{0:2d}'.format(i), '{:<{l}}'.format(self.vmlist[uuid], l=self.VM_max_len), mystr)
+            print('{0:2d}'.format(i), '{:<{l}}'.format(self.vmlist[uuid], l=self.VM_max_len), mystr, VMc.conf['Guest OS'])
             i += 1
     def locate_vm_menu_selection(self, i):
         j = 1
@@ -333,6 +366,21 @@ class VMS:
             return VMc.name
         else:
             return None
+    def get_mac_addr(self, i, nicn):
+        uuid, VMc = self.locate_vm_menu_selection(i)
+        match = re.search(r'MAC:(\S+),',VMc.conf["NIC " + nicn])
+        if match:
+            mac = match.group(1)
+            mac = ":".join(["%s" % (mac[i:i + 2]) for i in range(0, 12, 2)])
+            nmac = ' '
+            while not re.match("[0-9A-F]{2}([-:]?)[0-9A-F]{2}(\\1[0-9A-F]{2}){4}$", nmac.upper()):
+                nmac = input("Enter MAC (" + mac + ") ")
+                if nmac == "":
+                    nmac = mac
+        nmac = re.sub('[.:-]', '', nmac).upper()
+        return nmac
+
+
 class VM:
     def __init__(self, name, uuid):
         self.name = name
@@ -347,7 +395,6 @@ class VM:
         for k, v in self.conf.items():
             if re.search('NIC', k):
                 for field in re.split(',', v):
-                    #print(field)
                     if re.search('MAC', field):
                         nics = field
                     for p in nicf:
@@ -369,6 +416,8 @@ class VM:
                     continue
                 for r in self.VMParms:
                     if re.search(r, k):
+                        if k == "State":
+                            v = re.sub("T"," ", v)
                         self.conf.update({k: v})
 class DISKS:
     def __init__(self):
@@ -455,7 +504,7 @@ class DISKS:
     def show_attachable_disks(self, vm, attach):
         i = 1
         for disk, D in self.disks.items():
-            if D.props['Type'] == "shareable" or len(D.conns) == 0:
+            if D.props['Type'].lower() == "shareable" or len(D.conns) == 0:
                 if attach == 0:
                     print(i, "  ", D.props['Capacity'], D.props['Location'])
                 if attach == i:
@@ -610,6 +659,7 @@ def edit_vm(V, D, user_input):
             nicmodel = get_int("NIC Model " + str(nicmodels) + " ? ")
             nicm = nicmodels[nicmodel]
             nictype = vm_select_nictype()
+            mac = V.get_mac_addr(user_selection, nicn)
             if nictype == "bridged":
                 nicnet = vm_select_nicnet("bridgedifs")
                 if isrunning:
@@ -651,6 +701,8 @@ def edit_vm(V, D, user_input):
                         continue
                 else:
                     V.run_with_args(user_selection, 'modifyvm', ['--nic' + nicn, 'none'])
+            if not isrunning:
+                V.run_with_args(user_selection, 'modifyvm', ['--macaddress' + nicn, mac])
         elif user_input == "U":
             if V.is_vm_running(user_selection):
                 continue
@@ -891,15 +943,19 @@ def init_config_vars():
         if key == 'sleeptime' : sleeptime = int(config['vbm']['sleeptime'])
         if key == 'lockfoo' : lockfoo = config['vbm']['lockfoo']
     return 0
+
 def main():
     init_config_vars()
+    #vbox_sync_config()
     L = FileLock(lockfoo)
     L.acquire()
     parser = argparse.ArgumentParser(description='Manage your VirtualBox VMs.')
     parser.add_argument('-l', action='store_true', help='List the VirtualBox VMs.')
+    parser.add_argument('-s', type=int, help='Show configuration of VM N', metavar='N')
     parser.add_argument('-p', type=int, help='Power Off VM N', metavar='N')
     parser.add_argument('-e', type=int, help='Edit VM N', metavar='N')
     parser.add_argument('-d', type=int, help='Delete VM N', metavar='N')
+    parser.add_argument('-r', action='store_true', help='Sync on disk config with VirtualBox')
 
     boot = parser.add_argument_group('boot')
     boot.add_argument('-b', type=int, help='Boot VM N', metavar='N')
@@ -926,6 +982,8 @@ def main():
     D.populate()
     if results.l:
         V.show_vm_menu()
+    elif results.s:
+        V.show_vm_menu_selection(results.s)
     elif results.b:
         vmname = V.is_valid_vm(results.b)
         if vmname is not None:
@@ -948,6 +1006,8 @@ def main():
                 return
         print(f"Delete {vmname}")
         V.delete_vm(V, D, results.d)
+    elif results.r:
+        V.vbox_sync_config()
     elif results.i:
         top_menu(V, D, L)
     elif results.c:
