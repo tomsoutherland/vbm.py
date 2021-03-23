@@ -368,7 +368,10 @@ class VMS:
             return None
     def get_mac_addr(self, i, nicn):
         uuid, VMc = self.locate_vm_menu_selection(i)
-        match = re.search(r'MAC:(\S+),',VMc.conf["NIC " + nicn])
+        try:
+            match = re.search(r'MAC:(\S+),', VMc.conf["NIC " + nicn])
+        except:
+            match = re.search(r'(\S+)', '0123456789AB')
         if match:
             mac = match.group(1)
             mac = ":".join(["%s" % (mac[i:i + 2]) for i in range(0, 12, 2)])
@@ -378,6 +381,8 @@ class VMS:
                 if nmac == "":
                     nmac = mac
         nmac = re.sub('[.:-]', '', nmac).upper()
+        if nmac == '0123456789AB':
+            return 'auto'
         return nmac
 
 
@@ -666,28 +671,32 @@ def edit_vm(V, D, user_input):
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--bridgeadapter' + nicn, nicnet, '--nictype' + nicn, nicm])
+                                ['--nic' + nicn, nictype, '--bridgeadapter' + nicn, nicnet, '--nictype' + nicn, nicm,
+                                 '--macaddress' + nicn, mac])
             elif nictype == "hostonly":
                 nicnet = vm_select_nicnet("hostonlyifs")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--hostonlyadapter' + nicn, nicnet, '--nictype' + nicn, nicm])
+                                ['--nic' + nicn, nictype, '--hostonlyadapter' + nicn, nicnet, '--nictype' + nicn, nicm,
+                                 '--macaddress' + nicn, mac])
             elif nictype == "natnetwork":
                 nicnet = vm_select_nicnet("natnets")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--nat-network' + nicn, nicnet, '--nictype' + nicn, nicm])
+                                ['--nic' + nicn, nictype, '--nat-network' + nicn, nicnet, '--nictype' + nicn, nicm,
+                                 '--macaddress' + nicn, mac])
             elif nictype == "nat":
                 nicnet = vm_select_nicnet("natnets")
                 if isrunning:
                     V.run_with_args(user_selection, 'controlvm', ['nic' + nicn, nictype, nicnet])
                 else:
                     V.run_with_args(user_selection, 'modifyvm',
-                                ['--nic' + nicn, nictype, '--natnet' + nicn, nicnet, '--nictype' + nicn, nicm])
+                                ['--nic' + nicn, nictype, '--natnet' + nicn, nicnet, '--nictype' + nicn, nicm,
+                                 '--macaddress' + nicn, mac])
             elif nictype == "none":
                 if isrunning:
                     print('VM is running. Can only toggle link state')
@@ -700,9 +709,7 @@ def edit_vm(V, D, user_input):
                         V.run_with_args(user_selection, 'controlvm', ['setlinkstate' + nicn, 'on'])
                         continue
                 else:
-                    V.run_with_args(user_selection, 'modifyvm', ['--nic' + nicn, 'none'])
-            if not isrunning:
-                V.run_with_args(user_selection, 'modifyvm', ['--macaddress' + nicn, mac])
+                    V.run_with_args(user_selection, 'modifyvm', ['--nic' + nicn, 'none', '--macaddress' + nicn, mac])
         elif user_input == "U":
             if V.is_vm_running(user_selection):
                 continue
