@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-import re, datetime, argparse, os
+import re, datetime, argparse, ipaddress
+import xml.etree.ElementTree as ET
 from os.path import isfile, join, realpath, dirname
 from configparser import ConfigParser, ExtendedInterpolation
 from subprocess import Popen, PIPE, STDOUT
@@ -9,7 +10,7 @@ from os import execv, listdir, remove
 from glob import glob
 from FileLock import FileLock
 
-class VMS:
+class VMS(object):
     def __init__(self):
         self.VM_max_len = 1
         self.vmlist = {}
@@ -42,7 +43,6 @@ class VMS:
                 print("Registering ", k, v)
                 pipe = Popen([vbmanage, "registervm", v], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
                 print(pipe.stdout.read())
-
     def clone_vm(self, V, D, i, newvm):
         uuid, VMc = self.locate_vm_menu_selection(i)
         pipe = Popen([vbmanage, "clonevm", uuid, "--basefolder=" + vbbasedir, "--name=" + newvm, "--register"],
@@ -63,6 +63,15 @@ class VMS:
         if not uuid:
             print("No such VM:", str(i))
             return 0
+        if uc:
+            U = Unbound()
+            for k, v in VMc.conf.items():
+                match = re.search(r'NIC (\d*)', k)
+                if match:
+                    vm_nic = match.group(1)
+                match = re.search(r'MAC:(\S+), .* \'([\S\-]+)\',', v)
+                if match:
+                    U.unbound_ip(VMc.name, match.group(1), match.group(2), vm_nic, VMc.uuid)
         pfoo = "/tmp/vb-" + VMc.name + "-console"
         if self.is_vm_running(i):
             return pfoo, VMc.name
@@ -80,6 +89,8 @@ class VMS:
             else:
                 vargs = vbheadlessargs.split(' ')
             Popen([vbheadless] + vargs + ["-s", uuid], close_fds=True, shell=False)
+            if uc:
+                U.unbound_control()
             sleep(sleeptime)
         return pfoo, VMc.name
     def poweroff_vm(self, V, D, i):
@@ -104,6 +115,16 @@ class VMS:
                 self.VMSlist[uuid].populate()
     def delete_vm(self, V, D, i,):
         uuid, VMc = self.locate_vm_menu_selection(i)
+        if uc:
+            U = Unbound()
+            for k, v in VMc.conf.items():
+                match = re.search(r'NIC (\d*)', k)
+                if match:
+                    vm_nic = match.group(1)
+                match = re.search(r'MAC:(\S+), .* \'([\S\-]+)\',', v)
+                if match:
+                    U.unbound_rm_ip(VMc.name, match.group(1), match.group(2), vm_nic, VMc.uuid)
+            U.unbound_control()
         pipe = Popen([vbmanage, "unregistervm", uuid, "--delete"], stdout=PIPE, stderr=STDOUT, encoding='utf-8')
         print(pipe.stdout.read())
         sleep(sleeptime)
@@ -384,9 +405,7 @@ class VMS:
         if nmac == '0123456789AB':
             return 'auto'
         return nmac
-
-
-class VM:
+class VM(object):
     def __init__(self, name, uuid):
         self.name = name
         self.uuid = uuid
@@ -424,7 +443,7 @@ class VM:
                         if k == "State":
                             v = re.sub("T"," ", v)
                         self.conf.update({k: v})
-class DISKS:
+class DISKS(object):
     def __init__(self):
         self.disks = {}
     def populate(self):
@@ -516,7 +535,7 @@ class DISKS:
                     return disk
                 i += 1
         return ''
-class DISK:
+class DISK(object):
     def __init__(self, uuid):
         self.uuid = uuid
         self.props = {}
@@ -538,6 +557,147 @@ class DISK:
             print("Connected to", key, val)
     def show_size(self):
         return self.props['Capacity']
+class Unbound(object):
+    def __init__(self):
+        self.natnets = {}
+        self.mac_dict = {}
+        self.populate()
+    def is_ip_used(self, hostip):
+        for m in self.mac_dict:
+            if hostip in self.mac_dict[m].values():
+                return True
+        return False
+    def run_command(self, s, verbose=False):
+        pipe = Popen(s.split(' '), stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+        if verbose:
+            print(s, '\n', pipe.stdout.read())
+        return pipe
+    def resolv_conf(self):
+        ns = []
+        try:
+            with open('/etc/resolv.conf', 'r') as resolvconf:
+                for line in resolvconf.readlines():
+                    match = re.search(r'^nameserver\s*(\d*\.\d*\.\d*\.\d*)', line)
+                    if match:
+                        ns.append(match.group(1))
+        except:
+            return []
+        return ns
+    def populate(self):
+        pipe = self.run_command(vbmanage + " list natnetworks", False)
+        for line in pipe.stdout:
+            match = re.search(r'^NetworkName:\s+(\S*)', line)
+            if match:
+                n = match.group(1)
+                self.natnets[n]={}
+            match = re.search(r'^Network:\s+(\S*)', line)
+            if match:
+                self.natnets[n].update({'Network': match.group(1)})
+            match = re.search(r'127.0.0.1=(\d*)', line)
+            if match:
+                self.natnets[n].update({'Loopback': match.group(1)})
+        pipe = self.run_command(vbmanage + " list dhcpservers", False)
+        for line in pipe.stdout:
+            match = re.search(' MAC (\S+)', line)
+            if match:
+                mac = re.sub('[.:-]', '', match.group(1).upper())
+                self.mac_dict[mac]={}
+            match = re.search(r'Fixed Address:\s+(\S+)', line)
+            if match:
+                self.mac_dict[mac].update({'IP': match.group(1)})
+        for natnet in self.natnets.keys():
+            tree = ET.parse(join(vboxdata, natnet + '-Dhcpd.leases'))
+            root = tree.getroot()
+            for lease in root.findall('Lease'):
+                mac = ip = None
+                if lease.get('state') == 'expired': continue
+                mac = re.sub('[.:-]', '', lease.get('mac').upper())
+                ip = lease.find('Address').get('value')
+                if mac and ip:
+                    if mac in self.mac_dict:
+                        continue
+                    else:
+                        self.mac_dict[mac] = {}
+                        self.mac_dict[mac].update({'IP': ip})
+        pipe = self.run_command(vbmanage + " list -l vms", False)
+        for line in pipe.stdout:
+            match = re.search(r'^Name:\s+(\S+)', line)
+            if match: hname = match.group(1)
+            match = re.search(r'MAC: (\S+),', line)
+            if match:
+                mac = match.group(1)
+                if not mac in self.mac_dict:
+                    self.mac_dict[mac] = {}
+                if mac in mac_over:
+                    self.mac_dict[mac].update({'name': mac_over[mac]})
+                else:
+                    self.mac_dict[mac].update({'name': hname})
+    def print_dicts(self):
+        print('natnets', self.natnets, '\n\n', 'mac_dict', self.mac_dict, '\n\n', 'mac_over', mac_over)
+        return
+    def unbound_rm_ip(self, vm_name, vm_mac, vm_natnet, vm_nic, vm_uuid):
+        s = vbmanage + ' dhcpserver modify --network=' + vm_natnet + ' --vm=' + vm_uuid + ' --nic=' + vm_nic +\
+            ' --remove-config'
+        self.run_command(s, False)
+        self.mac_dict.pop(vm_mac, None)
+    def unbound_ip(self, vm_name, vm_mac, vm_natnet, vm_nic, vm_uuid):
+        if vm_mac in self.mac_dict:
+            if 'IP' in self.mac_dict[vm_mac]:
+                ip = self.mac_dict[vm_mac]["IP"]
+                if 'name' in self.mac_dict[vm_mac]:
+                    hname = self.mac_dict[vm_mac]["name"]
+                    s = vbmanage + ' dhcpserver modify --network=' + vm_natnet + ' --vm=' + vm_uuid + ' --nic=' + \
+                        vm_nic + ' --set-opt=12 ' + hname + ' --fixed-address=' + ip
+                    self.run_command(s, False)
+                return
+        else:
+            self.mac_dict[mac] = {}
+            self.mac_dict[mac].update({'name': vm_name})
+        if vm_natnet in self.natnets:
+            dhcpnet = ipaddress.ip_network(self.natnets[vm_natnet]['Network'])
+            for hostip in dhcpnet.hosts():
+                break_flag = False
+                hostip = str(hostip)
+                if re.search('\.\d$', hostip): continue
+                if self.is_ip_used(hostip): continue
+                self.mac_dict[vm_mac].update({'IP': hostip})
+                s = vbmanage + ' dhcpserver modify --network=' + vm_natnet + ' --vm=' + vm_uuid + ' --nic=' + vm_nic +\
+                        ' --set-opt=12 ' + vm_name + ' --fixed-address=' + hostip
+                self.run_command(s, False)
+                return
+    def unbound_control(self):
+        verbose = True
+        self.run_command(uc + " reload", verbose)
+        for ns in self.resolv_conf():
+            self.run_command(uc + " forward " + ns, verbose)
+        for natnet in self.natnets.keys():
+            if natnet in natnetdns:
+                dnsdom = natnetdns[natnet]
+            else:
+                continue
+            if not re.search('\S+\.$', dnsdom):
+                dnsdom = dnsdom + '.'
+            self.run_command(uc + " local_zone " + dnsdom + " typetransparent", verbose)
+            self.run_command(uc + " local_data " + dnsdom + " 10800 IN SOA woodstock." + dnsdom + \
+                             " nobody.invalid. 1 3600 1200 604800 10800", verbose)
+            self.run_command(uc + " local_data " + dnsdom + " IN NS woodstock." + dnsdom, verbose)
+            ipnet = ipaddress.ip_network(self.natnets[natnet]['Network'])
+            ns = (str(ipaddress.ip_address(int(ipnet.network_address) + int((self.natnets[natnet]['Loopback'])))))
+            self.run_command(uc + " local_data " + "woodstock." + dnsdom + " IN A " + ns, verbose)
+            s = uc + ' local_data ' + ipaddress.ip_address(ns).reverse_pointer + '. IN PTR woodstock.' + dnsdom
+            self.run_command(s, verbose)
+            for m in self.mac_dict.keys():
+                host = self.mac_dict[m]['name'] + '.' + dnsdom
+                if 'IP' in self.mac_dict[m]:
+                    ip = self.mac_dict[m]['IP']
+                    self.run_command(uc + ' local_data ' + host + ' IN A ' + ip, verbose)
+                    s = uc + ' local_data ' + ipaddress.ip_address(ip).reverse_pointer + '. IN PTR ' + host
+                    self.run_command(s, True)
+            self.run_command(vbmanage + " dhcpserver modify --network=" + natnet + " --set-opt=6 " + ns, verbose)
+            self.run_command(
+                vbmanage + " dhcpserver modify --network=" + natnet + " --set-opt=15 " + dnsdom.rstrip('\.'), verbose)
+            self.run_command(vbmanage + " dhcpserver restart --network=" + natnet, verbose)
+        return
 
 def vm_select_os():
     oslist = {}
@@ -578,7 +738,8 @@ def get_int(user_prompt):
         return -1
     return tmp
 def edit_vm(V, D, user_input):
-    if V.is_valid_vm(user_input) == None:
+    vm_name = V.is_valid_vm(user_input)
+    if vm_name == None:
         print("No such VM:", str(user_input))
         return
     user_selection = user_input
@@ -937,18 +1098,31 @@ def init_config_vars():
     global socatargs
     global sleeptime
     global lockfoo
+    global mac_over
+    global natnetdns
+    global vboxdata
+    global uc
+    uc = None
+    mac_over = {}
+    natnetdns = {}
     for key, val in config.items('vbm'):
-        if key == 'isodir' : isodir = config['vbm']['isodir']
-        if key == 'vbbasedir' : vbbasedir = config['vbm']['vbbasedir']
-        if key == 'vbdiskdir' : vbdiskdir = config['vbm']['vbdiskdir']
-        if key == 'vbheadless' : vbheadless = config['vbm']['vbheadless']
-        if key == 'vbheadlessargs' : vbheadlessargs = config['vbm']['vbheadlessargs']
+        if key == 'isodir': isodir = config['vbm']['isodir']
+        if key == 'vbbasedir': vbbasedir = config['vbm']['vbbasedir']
+        if key == 'vbdiskdir': vbdiskdir = config['vbm']['vbdiskdir']
+        if key == 'vbheadless': vbheadless = config['vbm']['vbheadless']
+        if key == 'vbheadlessargs': vbheadlessargs = config['vbm']['vbheadlessargs']
         if key == 'vrdeargs': vrdeargs = config['vbm']['vrdeargs']
-        if key == 'vbmanage' : vbmanage = config['vbm']['vbmanage']
-        if key == 'socat' : socat = config['vbm']['socat']
-        if key == 'socatargs' : socatargs = config['vbm']['socatargs']
-        if key == 'sleeptime' : sleeptime = int(config['vbm']['sleeptime'])
-        if key == 'lockfoo' : lockfoo = config['vbm']['lockfoo']
+        if key == 'vbmanage': vbmanage = config['vbm']['vbmanage']
+        if key == 'socat': socat = config['vbm']['socat']
+        if key == 'socatargs': socatargs = config['vbm']['socatargs']
+        if key == 'sleeptime': sleeptime = int(config['vbm']['sleeptime'])
+        if key == 'lockfoo': lockfoo = config['vbm']['lockfoo']
+        if key == 'vboxdata': vboxdata = config['vbm']['vboxdata']
+        if key == 'uc': uc = config['vbm']['uc']
+    for key, val in config.items('name_overrides'):
+        mac_over.update({key.upper(): val})
+    for key, val in config.items('natnetdns'):
+        natnetdns.update({key: val})
     return 0
 
 def main():
