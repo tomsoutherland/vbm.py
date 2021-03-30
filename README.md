@@ -32,12 +32,14 @@ disks:
   --brief        Shorter disk list
   --full         Include all disk details in list
 </pre>
+
+
 ABOUT
 
 vbm.py is a python3 program for management of VirtualBox VMs. I frequently
 need to create multiple VMs and attach shared storage which is very
 cumbersome in the GUI. This is the primary reason for writing the program (plus
-I get to sharpen my phython skills)
+I get to sharpen my python skills)
 
 The design of the program assumes you intend to run your VMs with a serial port
 console. 'socat' will need to be installed in order for this to work. The VMs will
@@ -51,11 +53,9 @@ using the '-u' option.
 
 INSTALL
 
-The program is a single python script with an additional configuration file.
+The easiest way to install the program is to create a directory for the project then
+run "git clone https://github.com/tomsoutherland/vbm.py.git" inside the target directory.
 
-You will need to configure the variables in vbmconfig.py to reflect your environment.
-
-You can just check out the project then crete a symbolic link to the 'vbm.py' file in the
-project.
+You will need to configure the variables in vbm.ini to reflect your environment.
 
 I can be contacted at southerland DOT tom AT gmail DOT com.
