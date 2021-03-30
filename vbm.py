@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-import re, datetime, argparse, ipaddress
+import re, datetime, argparse, ipaddress, json
 import xml.etree.ElementTree as ET
 from os.path import isfile, join, realpath, dirname
-from configparser import ConfigParser, ExtendedInterpolation
+from configparser import RawConfigParser, ExtendedInterpolation
 from subprocess import Popen, PIPE, STDOUT
 from time import sleep
 from os import execv, listdir, remove
@@ -562,6 +562,8 @@ class Unbound(object):
         self.natnets = {}
         self.mac_dict = {}
         self.populate()
+    def print_natnets(self):
+        print('natnets', self.natnets)
     def is_ip_used(self, hostip):
         for m in self.mac_dict:
             if hostip in self.mac_dict[m].values():
@@ -569,9 +571,10 @@ class Unbound(object):
         return False
     def run_command(self, s, verbose=False):
         pipe = Popen(s.split(' '), stdout=PIPE, stderr=STDOUT, encoding='utf-8')
+        p = pipe.stdout.read()
         if verbose:
-            print(s, '\n', pipe.stdout.read())
-        return pipe
+            print(s, '\n', p)
+        return p
     def resolv_conf(self):
         ns = []
         try:
@@ -583,9 +586,40 @@ class Unbound(object):
         except:
             return []
         return ns
+    def get_key_natnetdns(self, v):
+        for nat, domain in natnetdns.items():
+            if v == domain:
+                return nat
+        return None
+    def init_lhosts(self):
+        try:
+            with open(join(vboxdata, "vbm-lhosts.xml"), 'r') as lhfoo:
+                lhdata = json.load(lhfoo)
+                lhfoo.close()
+        except:
+            lhdata = {}
+        for k, v in mac_over.items():
+            if re.search('DEADBEEF', k):
+                p = v.split('.')
+                hn = p.pop(0)
+                dn = '.'.join(p)
+                natnet = self.get_key_natnetdns(dn)
+                if not k in lhdata:
+                    print(natnetdns)
+                    print(natnet)
+                    self.unbound_ip(hn, k, natnet, None, None)
+                    self.mac_dict[k].update({'netname': natnet})
+                else:
+                    self.mac_dict[k] = {}
+                    self.mac_dict[k].update({'netname': lhdata[k]['netname']})
+                    self.mac_dict[k].update({'IP': lhdata[k]['IP']})
+                    self.mac_dict[k].update({'name': hn})
+        with open(join(vboxdata, "vbm-lhosts.xml"), 'w') as lhfoo:
+            json.dump(self.mac_dict, lhfoo, indent=2)
+            lhfoo.close()
     def populate(self):
         pipe = self.run_command(vbmanage + " list natnetworks", False)
-        for line in pipe.stdout:
+        for line in pipe.splitlines():
             match = re.search(r'^NetworkName:\s+(\S*)', line)
             if match:
                 n = match.group(1)
@@ -597,11 +631,15 @@ class Unbound(object):
             if match:
                 self.natnets[n].update({'Loopback': match.group(1)})
         pipe = self.run_command(vbmanage + " list dhcpservers", False)
-        for line in pipe.stdout:
-            match = re.search(' MAC (\S+)', line)
+        for line in pipe.splitlines():
+            match = re.search(r'NetworkName:\s+(\S.*)$', line)
+            if match:
+                netname = match.group(1)
+            match = re.search(r' MAC (\S+)', line)
             if match:
                 mac = re.sub('[.:-]', '', match.group(1).upper())
                 self.mac_dict[mac]={}
+                self.mac_dict[mac].update({'netname': netname})
             match = re.search(r'Fixed Address:\s+(\S+)', line)
             if match:
                 self.mac_dict[mac].update({'IP': match.group(1)})
@@ -620,7 +658,7 @@ class Unbound(object):
                         self.mac_dict[mac] = {}
                         self.mac_dict[mac].update({'IP': ip})
         pipe = self.run_command(vbmanage + " list -l vms", False)
-        for line in pipe.stdout:
+        for line in pipe.splitlines():
             match = re.search(r'^Name:\s+(\S+)', line)
             if match: hname = match.group(1)
             match = re.search(r'MAC: (\S+),', line)
@@ -632,6 +670,7 @@ class Unbound(object):
                     self.mac_dict[mac].update({'name': mac_over[mac]})
                 else:
                     self.mac_dict[mac].update({'name': hname})
+        self.init_lhosts()
     def print_dicts(self):
         print('natnets', self.natnets, '\n\n', 'mac_dict', self.mac_dict, '\n\n', 'mac_over', mac_over)
         return
@@ -642,6 +681,7 @@ class Unbound(object):
         self.mac_dict.pop(vm_mac, None)
     def unbound_ip(self, vm_name, vm_mac, vm_natnet, vm_nic, vm_uuid):
         if vm_mac in self.mac_dict:
+            if re.search('DEADBEEF', vm_mac): return
             if 'IP' in self.mac_dict[vm_mac]:
                 ip = self.mac_dict[vm_mac]["IP"]
                 if 'name' in self.mac_dict[vm_mac]:
@@ -651,8 +691,9 @@ class Unbound(object):
                     self.run_command(s, False)
                 return
         else:
-            self.mac_dict[mac] = {}
-            self.mac_dict[mac].update({'name': vm_name})
+            self.mac_dict[vm_mac] = {}
+            self.mac_dict[vm_mac].update({'name': vm_name})
+            # bug here \/\/
         if vm_natnet in self.natnets:
             dhcpnet = ipaddress.ip_network(self.natnets[vm_natnet]['Network'])
             for hostip in dhcpnet.hosts():
@@ -661,12 +702,14 @@ class Unbound(object):
                 if re.search('\.\d$', hostip): continue
                 if self.is_ip_used(hostip): continue
                 self.mac_dict[vm_mac].update({'IP': hostip})
+                if re.search('DEADBEEF', vm_mac): return
                 s = vbmanage + ' dhcpserver modify --network=' + vm_natnet + ' --vm=' + vm_uuid + ' --nic=' + vm_nic +\
                         ' --set-opt=12 ' + vm_name + ' --fixed-address=' + hostip
                 self.run_command(s, False)
                 return
+
     def unbound_control(self):
-        verbose = True
+        verbose = False
         self.run_command(uc + " reload", verbose)
         for ns in self.resolv_conf():
             self.run_command(uc + " forward " + ns, verbose)
@@ -677,22 +720,27 @@ class Unbound(object):
                 continue
             if not re.search('\S+\.$', dnsdom):
                 dnsdom = dnsdom + '.'
+            nsname = "ns-" + re.sub('[.: ]', '', natnet) + '.' + dnsdom
             self.run_command(uc + " local_zone " + dnsdom + " typetransparent", verbose)
-            self.run_command(uc + " local_data " + dnsdom + " 10800 IN SOA woodstock." + dnsdom + \
+            self.run_command(uc + " local_data " + dnsdom + " 10800 IN SOA " + nsname + \
                              " nobody.invalid. 1 3600 1200 604800 10800", verbose)
-            self.run_command(uc + " local_data " + dnsdom + " IN NS woodstock." + dnsdom, verbose)
+            self.run_command(uc + " local_data " + dnsdom + " IN NS " + nsname, verbose)
             ipnet = ipaddress.ip_network(self.natnets[natnet]['Network'])
             ns = (str(ipaddress.ip_address(int(ipnet.network_address) + int((self.natnets[natnet]['Loopback'])))))
-            self.run_command(uc + " local_data " + "woodstock." + dnsdom + " IN A " + ns, verbose)
-            s = uc + ' local_data ' + ipaddress.ip_address(ns).reverse_pointer + '. IN PTR woodstock.' + dnsdom
+            self.run_command(uc + " local_data " + nsname + " IN A " + ns, verbose)
+            s = uc + " local_data " + ipaddress.ip_address(ns).reverse_pointer + ". IN PTR " + nsname
             self.run_command(s, verbose)
             for m in self.mac_dict.keys():
+                try:
+                    if self.mac_dict[m]["netname"] != natnet: continue
+                except:
+                    continue
                 host = self.mac_dict[m]['name'] + '.' + dnsdom
                 if 'IP' in self.mac_dict[m]:
                     ip = self.mac_dict[m]['IP']
                     self.run_command(uc + ' local_data ' + host + ' IN A ' + ip, verbose)
                     s = uc + ' local_data ' + ipaddress.ip_address(ip).reverse_pointer + '. IN PTR ' + host
-                    self.run_command(s, True)
+                    self.run_command(s, verbose)
             self.run_command(vbmanage + " dhcpserver modify --network=" + natnet + " --set-opt=6 " + ns, verbose)
             self.run_command(
                 vbmanage + " dhcpserver modify --network=" + natnet + " --set-opt=15 " + dnsdom.rstrip('\.'), verbose)
@@ -1081,7 +1129,8 @@ def vm_console(pfoo, vmname, L):
     execv(socat, ["socat", socatargs, pfoo])
 def init_config_vars():
     ppath = (dirname(realpath(__file__)))
-    config = ConfigParser(interpolation=ExtendedInterpolation())
+    config = RawConfigParser(interpolation=ExtendedInterpolation())
+    config.optionxform = lambda option: option
     try:
         config.read_file(open(join(ppath, 'vbm.ini'), 'rt', encoding='utf-8'))
     except:
@@ -1121,13 +1170,14 @@ def init_config_vars():
         if key == 'uc': uc = config['vbm']['uc']
     for key, val in config.items('name_overrides'):
         mac_over.update({key.upper(): val})
+    for key, val in config.items('logical_hosts'):
+        mac_over.update({key.upper(): val})
     for key, val in config.items('natnetdns'):
         natnetdns.update({key: val})
     return 0
 
 def main():
     init_config_vars()
-    #vbox_sync_config()
     L = FileLock(lockfoo)
     L.acquire()
     parser = argparse.ArgumentParser(description='Manage your VirtualBox VMs.')
@@ -1137,6 +1187,7 @@ def main():
     parser.add_argument('-e', type=int, help='Edit VM N', metavar='N')
     parser.add_argument('-d', type=int, help='Delete VM N', metavar='N')
     parser.add_argument('-r', action='store_true', help='Sync on disk config with VirtualBox')
+    parser.add_argument('-u', action='store_true', help='Update unbound DNS')
 
     boot = parser.add_argument_group('boot')
     boot.add_argument('-b', type=int, help='Boot VM N', metavar='N')
@@ -1189,6 +1240,14 @@ def main():
         V.delete_vm(V, D, results.d)
     elif results.r:
         V.vbox_sync_config()
+    elif results.u:
+        if uc:
+            U = Unbound()
+            U.unbound_control()
+        else:
+            ppath = (dirname(realpath(__file__)))
+            print('Check configuration: ', join(ppath, 'vbm.ini'))
+            print('unbound is not configured.')
     elif results.i:
         top_menu(V, D, L)
     elif results.c:
