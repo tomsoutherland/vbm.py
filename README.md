@@ -41,6 +41,9 @@ also have to be configured to support a serial port console. The serial port is 
 to the VM when it is booted. It then launches 'socat' and connects to the serial port
 PIPE for console communications.
 
+The program also includes support for running an "unbound" server to provide a DNS
+server to the NAT network(s).
+
 INSTALL
 
 The program is a single python script with an additional configuration file.
