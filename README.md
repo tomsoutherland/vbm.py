@@ -54,7 +54,7 @@ using the '-u' option.
 INSTALL
 
 The easiest way to install the program is to create a directory for the project then
-run "git clone https://github.com/tomsoutherland/vbm.py.git" inside the target directory.
+run <pre>git clone https://github.com/tomsoutherland/vbm.py.git</pre> inside the target directory.
 
 You will need to configure the variables in vbm.ini to reflect your environment.
 
